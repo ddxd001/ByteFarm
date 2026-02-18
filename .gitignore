@@ -1,0 +1,21 @@
+# 编辑器临时运行文件
+_editor_run.py
+
+# 未加载存档时的临时运行目录
+saves/_scratch/
+
+# 用户存档（可选：若需提交示例存档可移除此行）
+saves/save_*/
+
+# 用户配置（全屏、格子大小等）
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+.env
