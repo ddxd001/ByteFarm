@@ -61,7 +61,7 @@ class GameEngine:
         self.fullscreen = config.get("fullscreen", True)
         self.tile_size = tile_size
         self._apply_display_mode(width, height)
-        pygame.display.set_caption("编程资源收集游戏 - 用 Python 控制你的角色")
+        pygame.display.set_caption("ByteFarm - 用 Python 控制你的角色")
         
         self.clock = pygame.time.Clock()
         self.font = self._get_chinese_font(24)
@@ -108,7 +108,7 @@ class GameEngine:
             self.screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
         self.width = self.screen.get_width()
         self.height = self.screen.get_height()
-        pygame.display.set_caption("编程资源收集游戏 - 用 Python 控制你的角色")
+        pygame.display.set_caption("ByteFarm - 用 Python 控制你的角色")
         if hasattr(self, "editor_panel"):
             self.editor_panel.clamp_to_screen(self.width, self.height)
         if hasattr(self, "terminal_panel"):
@@ -1214,7 +1214,7 @@ class GameEngine:
             self.screen.blit(s, (0, i))
         pygame.draw.rect(self.screen, (40, 45, 55), (0, 0, w, 4))
         # 标题
-        title = self.font_title.render("编程资源收集游戏", True, (255, 235, 120))
+        title = self.font_title.render("ByteFarm", True, (255, 235, 120))
         title_rect = title.get_rect(centerx=w // 2, top=50)
         self.screen.blit(title, title_rect)
         tag = self.font.render("用 Python 编写程序，控制你的机器人", True, (150, 160, 180))
