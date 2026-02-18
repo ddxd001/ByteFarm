@@ -23,6 +23,18 @@ pip install -r requirements.txt
 python main.py
 ```
 
+## 构建 macOS .app 与 .dmg
+
+```bash
+# 安装构建依赖（若使用 venv 可跳过，脚本会自动创建）
+pip install -r requirements-build.txt
+
+# 执行构建
+./build_dmg.sh
+```
+
+输出：`dist/ByteFarm.app` 与 `ByteFarm.dmg`。打包后存档与配置存于 `~/Library/Application Support/ByteFarm/`。
+
 ## 如何游玩
 
 1. 启动游戏后进入主菜单，可选择「新游戏」或「加载存档」

@@ -3,12 +3,18 @@
 素材来源见 assets/README.md（CC0 免费可商用）
 """
 
+import sys
 import pygame
 from pathlib import Path
 from typing import Optional, Dict, Tuple
 
-# 项目根目录下的 assets
-_ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+# 项目根目录或打包后的 assets
+def _assets_dir() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "assets"
+    return Path(__file__).resolve().parent.parent / "assets"
+
+_ASSETS_DIR = _assets_dir()
 _CACHE: Dict[str, pygame.Surface] = {}
 
 

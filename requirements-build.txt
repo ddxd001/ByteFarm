@@ -1,0 +1,4 @@
+# 构建 .app 和 .dmg 所需依赖
+pygame>=2.5.0
+pyinstaller>=6.0.0
+pillow>=9.0.0

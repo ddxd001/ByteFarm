@@ -10,6 +10,17 @@ saves/save_*/
 # 用户配置（全屏、格子大小等）
 config.json
 
+# 构建
+.build_venv/
+build/
+dist/
+*.dmg
+release/*.app
+release/*.dmg
+ByteFarm.icns
+*.iconset
+icon.iconset
+
 # Python
 __pycache__/
 *.py[cod]

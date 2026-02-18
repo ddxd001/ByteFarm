@@ -9,9 +9,22 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
+def _app_base() -> Path:
+    """应用根目录：开发时为项目目录，打包后为 Application Support"""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        # PyInstaller 打包：用户数据存 ~/Library/Application Support/ByteFarm
+        return Path.home() / "Library" / "Application Support" / "ByteFarm"
+    return Path(__file__).resolve().parent.parent
+
+def _bundle_base() -> Path:
+    """打包资源目录（仅打包后有效）"""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)
+    return Path(__file__).resolve().parent.parent
+
 # 存档根目录
-SAVES_DIR = Path(__file__).resolve().parent.parent / "saves"
-CONFIG_FILE = Path(__file__).resolve().parent.parent / "config.json"
+SAVES_DIR = _app_base() / "saves"
+CONFIG_FILE = _app_base() / "config.json"
 MAX_SLOTS = 10
 
 
@@ -262,7 +275,8 @@ def migrate_old_save(slot_id: int) -> bool:
 
 def get_default_main_template() -> str:
     """获取默认 main.py 模板（新存档或迁移时使用）"""
-    template_path = Path(__file__).resolve().parent.parent / "player_strategy.py"
+    base = _bundle_base()
+    template_path = base / "player_strategy.py"
     if template_path.exists():
         try:
             return template_path.read_text(encoding="utf-8")

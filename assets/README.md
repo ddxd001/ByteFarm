@@ -2,10 +2,13 @@
 
 游戏会优先使用本目录下的图片；若不存在则使用内置程序绘制。
 
+- **ByteFarm_icon.png** — 应用图标（用于打包 .app / DMG），可替换为自定义 512×512 或更大 PNG。
+
 ## 目录结构
 
 ```
 assets/
+├── ByteFarm_icon.png  # 应用图标（可选）
 ├── tiles/          # 地形瓦片（与格子尺寸一致时会缩放）
 │   ├── grass.png   # 草地（或 grass_0.png, grass_1.png 等变体）
 │   └── sand.png    # 沙地（或 sandyland.png）
