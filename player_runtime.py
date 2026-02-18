@@ -28,6 +28,8 @@ class Ground:
 class Entities:
     Grass = "grass"
     Stone = "stone"
+    Bush = "bush"
+    Tree = "tree"
 
 
 class PlayerRuntime:

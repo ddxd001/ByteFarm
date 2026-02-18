@@ -3,7 +3,7 @@
 """
 
 from typing import Dict, Any
-from .api import RESOURCE_GRASS, RESOURCE_STONE
+from .api import RESOURCE_GRASS, RESOURCE_STONE, RESOURCE_WOOD
 from .upgrade_tree import UpgradeTree
 
 
@@ -13,7 +13,7 @@ class Player:
     def __init__(self, x: int, y: int):
         self.x = x
         self.y = y
-        self.inventory: Dict[str, int] = {RESOURCE_GRASS: 10, RESOURCE_STONE: 10}
+        self.inventory: Dict[str, int] = {RESOURCE_GRASS: 10, RESOURCE_STONE: 10, RESOURCE_WOOD: 0}
         self.upgrade_tree = UpgradeTree()
         
         # 采集冷却 (帧数)
@@ -76,10 +76,11 @@ class Player:
         """从字典创建玩家 (用于读档)，兼容旧版存档"""
         p = cls(data["x"], data["y"])
         inv = data.get("inventory", {})
-        # 旧存档 wood/ore 转为 grass/stone
+        # 旧存档 wood/ore 转为 grass/stone；新存档含 grass/stone/wood
         p.inventory = {
-            RESOURCE_GRASS: inv.get(RESOURCE_GRASS, inv.get("wood", 10)),
-            RESOURCE_STONE: inv.get(RESOURCE_STONE, inv.get("ore", 10)),
+            RESOURCE_GRASS: inv.get("grass", inv.get("wood", 10)),
+            RESOURCE_STONE: inv.get("stone", inv.get("ore", 10)),
+            RESOURCE_WOOD: inv.get("wood", 0) if "grass" in inv else 0,
         }
         if "upgrade_tree" in data:
             p.upgrade_tree = UpgradeTree.from_dict(data["upgrade_tree"])

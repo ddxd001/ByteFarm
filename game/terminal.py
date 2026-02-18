@@ -66,10 +66,11 @@ class TerminalPanel:
     
     def __init__(self, font: pygame.font.Font, screen_w: int, screen_h: int):
         self.font = font
-        self.x = 330  # 在左下角信息框(10,300)右侧，避免遮挡
-        self.y = screen_h - 230  # 位于底部 UI 上方
-        self.w = 480
-        self.h = min(180, screen_h - 120)
+        # 默认布局与存档1一致：右侧堆叠在编辑器下方
+        self.w = 641
+        self.x = min(829, screen_w - self.w - 20)
+        self.y = min(450, screen_h - 280)
+        self.h = min(244, screen_h - self.y - 100)
         self.minimized = False
         self._drag_mode = None
         self._drag_start = (0, 0)
@@ -173,30 +174,34 @@ class TerminalPanel:
     def render(self, surface: pygame.Surface) -> None:
         """渲染终端面板"""
         r = self.rect()
-        # 背景
-        pygame.draw.rect(surface, (28, 30, 36), r)
-        pygame.draw.rect(surface, (70, 75, 90), r, 2)
-        # 标题
-        title = self.font.render("OUTPUT", True, (220, 225, 235))
-        surface.blit(title, (r.x + 10, r.y + 4))
+        # 面板背景（圆角 + 阴影）
+        shadow_off = 3
+        shadow_surf = pygame.Surface((r.w + shadow_off * 2, r.h + shadow_off * 2), pygame.SRCALPHA)
+        pygame.draw.rect(shadow_surf, (0, 0, 0, 55), (shadow_off, shadow_off, r.w, r.h), border_radius=6)
+        surface.blit(shadow_surf, (r.x - shadow_off, r.y - shadow_off))
+        pygame.draw.rect(surface, (30, 33, 42), r, border_radius=6)
+        pygame.draw.rect(surface, (65, 72, 88), r, 2, border_radius=6)
+        # 标题栏
+        pygame.draw.rect(surface, (40, 44, 56), (r.x + 4, r.y + 4, r.w - 8, 22), border_radius=4)
+        title = self.font.render("OUTPUT", True, (230, 235, 245))
+        surface.blit(title, (r.x + 12, r.y + 5))
         # 最小化/展开
         if self.minimized:
             btn_rect = self.minmax_button_rect()
-            pygame.draw.rect(surface, (70, 90, 120), btn_rect)
+            pygame.draw.rect(surface, (65, 88, 115), btn_rect, border_radius=4)
             txt = self.font.render("展开", True, (255, 255, 255))
             surface.blit(txt, (btn_rect.x + (btn_rect.w - txt.get_width()) // 2, btn_rect.y + 2))
             return
         btn_rect = self.minmax_button_rect()
-        pygame.draw.rect(surface, (60, 70, 90), btn_rect)
+        pygame.draw.rect(surface, (55, 65, 85), btn_rect, border_radius=4)
         txt = self.font.render("-", True, (255, 255, 255))
         surface.blit(txt, (btn_rect.x + (btn_rect.w - txt.get_width()) // 2, btn_rect.y + 2))
         
         content = self.content_rect()
-        pygame.draw.rect(surface, (18, 20, 24), content)
+        pygame.draw.rect(surface, (20, 22, 28), (content.x, content.y, content.w, content.h), border_radius=4)
         if not self._buffer:
-            # 无内容时也显示伸缩把手
             h_rect = self.resize_handle_rect()
-            pygame.draw.polygon(surface, (90, 95, 105), [
+            pygame.draw.polygon(surface, (82, 90, 108), [
                 (h_rect.x + 6, h_rect.y + h_rect.h - 6),
                 (h_rect.x + h_rect.w - 6, h_rect.y + h_rect.h - 6),
                 (h_rect.x + h_rect.w - 6, h_rect.y + 6),
@@ -210,40 +215,35 @@ class TerminalPanel:
             self._scroll_offset = max(0, len(lines) - visible_lines)
             self._last_line_count = len(lines)
         
-        # 终端风格：深色背景
-        pygame.draw.rect(surface, (18, 20, 24), content)
+        pygame.draw.rect(surface, (20, 22, 28), (content.x, content.y, content.w, content.h), border_radius=4)
         
-        # 显示行（错误行用红色）
         for i in range(visible_lines):
             idx = self._scroll_offset + i
             if idx >= len(lines):
                 break
             line = lines[idx]
-            # Traceback/Error 行用红色
             is_error = (line.strip().startswith("Traceback") or
                         line.strip().startswith("Error") or
                         "Error:" in line or
                         "Exception:" in line or
                         "  File " in line)
-            color = (255, 100, 100) if is_error else (180, 200, 180)
+            color = (255, 110, 110) if is_error else (185, 205, 188)
             # 长行截断
             if len(line) > 200:
                 line = line[:197] + "..."
             surf = self.font.render(line, True, color)
             surface.blit(surf, (content.x, content.y + i * self.LINE_HEIGHT))
         
-        # 滚动条
         if len(lines) > visible_lines:
             sb_h = content.h
-            thumb_h = max(20, int(sb_h * visible_lines / len(lines)))
+            thumb_h = max(24, int(sb_h * visible_lines / len(lines)))
             thumb_y = content.y + int((sb_h - thumb_h) * self._scroll_offset / max(1, len(lines) - visible_lines))
             sb_x = content.x + content.w + 4
-            pygame.draw.rect(surface, (50, 52, 58), (sb_x, content.y, self.SCROLLBAR_W, sb_h))
-            pygame.draw.rect(surface, (90, 95, 105), (sb_x, thumb_y, self.SCROLLBAR_W, thumb_h))
+            pygame.draw.rect(surface, (42, 46, 56), (sb_x + 1, content.y + 2, self.SCROLLBAR_W - 2, sb_h - 4), border_radius=4)
+            pygame.draw.rect(surface, (78, 86, 102), (sb_x + 2, thumb_y + 2, self.SCROLLBAR_W - 4, thumb_h - 4), border_radius=4)
         
-        # 调整大小把手（右下角三角形，拖拽伸缩）
         h_rect = self.resize_handle_rect()
-        pygame.draw.polygon(surface, (90, 95, 105), [
+        pygame.draw.polygon(surface, (82, 90, 108), [
             (h_rect.x + 6, h_rect.y + h_rect.h - 6),
             (h_rect.x + h_rect.w - 6, h_rect.y + h_rect.h - 6),
             (h_rect.x + h_rect.w - 6, h_rect.y + 6),

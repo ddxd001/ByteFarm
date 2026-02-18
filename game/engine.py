@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
 
 from .api import (
-    RESOURCE_GRASS, RESOURCE_STONE, Ground, Entities,
+    RESOURCE_GRASS, RESOURCE_STONE, RESOURCE_WOOD, Ground, Entities,
     East, West, North, South,
 )
 from .world import World, TILE_GRASS, INITIAL_MAP_SIZE
@@ -24,6 +24,7 @@ from .upgrade_tree import UpgradeTree
 from .editor import CodeEditor, EditorPanel
 from .terminal import TerminalBuffer, TerminalPanel
 from .wiki import WIKI_LINES
+from . import assets as _assets
 
 
 # 时间系统：1000 ticks/秒，等级1 采集/移动 各需 500 ticks
@@ -37,18 +38,52 @@ BASE_PLANT_TICKS = 100   # 播种耗时，成熟需 1000 ticks（可离开）
 _MOD_KEY = pygame.KMOD_META if sys.platform == "darwin" else pygame.KMOD_CTRL
 _MOD_LABEL = "Cmd" if sys.platform == "darwin" else "Ctrl"
 
-# 颜色
+# UI 样式
+UI = {
+    "radius": 8,
+    "radius_sm": 4,
+    "shadow_offset": 3,
+    "shadow_alpha": 60,
+    "overlay_alpha": 200,
+    "header_h": 44,
+}
+
+# 颜色（无素材时的程序绘制）
 COLORS = {
-    "background": (30, 30, 35),
-    "grass": (76, 153, 0),
-    "player": (255, 200, 50),
+    "background": (28, 32, 38),
+    "grass": (72, 140, 48),
+    "grass_dark": (58, 118, 38),
+    "grass_light": (88, 158, 62),
+    "player": (255, 210, 60),
     "player_outline": (255, 255, 255),
-    "resource_grass": (120, 200, 60),   # 与草地区分
-    "resource_stone": (90, 90, 100),    # 与沙地区分
-    "sandyland": (210, 180, 140),
-    "ui_bg": (50, 50, 55),
+    "player_eye": (40, 40, 50),
+    "resource_grass": (100, 180, 50),
+    "resource_stone": (100, 98, 110),
+    "resource_wood": (139, 90, 43),    # Bush 灌木棕
+    "resource_tree": (45, 100, 55),    # Tree 树绿，与 Bush 区分
+    "sandyland": (198, 168, 128),
+    "sandyland_dark": (178, 148, 108),
+    "ui_bg": (48, 52, 58),
     "ui_text": (220, 220, 220),
 }
+
+
+def _draw_rounded_panel(
+    screen: pygame.Surface, rect: pygame.Rect,
+    bg: Tuple[int, int, int], border: Tuple[int, int, int] = (70, 80, 95),
+    radius: int = 8, shadow: bool = True,
+) -> None:
+    """绘制带圆角和可选阴影的面板"""
+    r = UI["radius"] if radius < 0 else radius
+    if shadow:
+        off = UI["shadow_offset"]
+        shadow_rect = pygame.Rect(rect.x + off, rect.y + off, rect.w, rect.h)
+        shadow_surf = pygame.Surface((rect.w + off * 2, rect.h + off * 2), pygame.SRCALPHA)
+        pygame.draw.rect(shadow_surf, (0, 0, 0, UI["shadow_alpha"]), (off, off, rect.w, rect.h), border_radius=r)
+        screen.blit(shadow_surf, (rect.x - off, rect.y - off))
+    pygame.draw.rect(screen, bg, rect, border_radius=r)
+    if border:
+        pygame.draw.rect(screen, border, rect, 2, border_radius=r)
 
 
 class GameEngine:
@@ -497,53 +532,77 @@ class GameEngine:
         self._op_start_tick = self.tick
     
     def _render_tiles(self, camera_x: int, camera_y: int) -> None:
-        """渲染地图格子"""
+        """渲染地图格子（优先素材，否则程序绘制带纹理感）"""
         ts = self.tile_size
         for y in range(self.world.height):
             for x in range(self.world.width):
                 tile = self.world.get_tile(x, y)
                 if not tile:
                     continue
-                
                 px = x * ts - camera_x
-                py = (self.world.height - 1 - y) * ts - camera_y  # y 向上增加
-                
-                # 只渲染视野内的
+                py = (self.world.height - 1 - y) * ts - camera_y
                 if px < -ts or py < -ts or px > self.width + ts or py > self.height + ts:
                     continue
-                
                 ground = tile.get("ground", Ground.Grassland)
-                if ground == Ground.Sandyland:
-                    color = COLORS["sandyland"]
+                # 尝试素材
+                surf = _assets.get_tile_surface(ground, ts, x, y)
+                if surf is not None:
+                    self.screen.blit(surf, (px, py))
                 else:
-                    color = COLORS["grass"]
-                
-                rect = pygame.Rect(px, py, ts - 1, ts - 1)
-                pygame.draw.rect(self.screen, color, rect)
-                
+                    # 程序绘制：轻微色差模拟纹理
+                    v = (x + y) % 3
+                    if ground == Ground.Sandyland:
+                        color = COLORS["sandyland_dark"] if v == 0 else COLORS["sandyland"]
+                    else:
+                        color = (COLORS["grass_dark"], COLORS["grass"], COLORS["grass_light"])[v]
+                    rect = pygame.Rect(px, py, ts - 1, ts - 1)
+                    pygame.draw.rect(self.screen, color, rect)
+                    # 草地加一点高光
+                    if ground == Ground.Grassland and ts >= 24:
+                        hx, hy = px + ts // 3, py + ts // 3
+                        hr = max(1, ts // 8)
+                        highlight = pygame.Surface((hr * 2 + 2, hr * 2 + 2), pygame.SRCALPHA)
+                        pygame.draw.circle(highlight, (*COLORS["grass_light"], 90), (hr + 1, hr + 1), hr)
+                        self.screen.blit(highlight, (hx - hr - 1, hy - hr - 1))
                 center = (px + ts // 2, py + ts // 2)
                 entity = tile.get("entity")
                 if entity:
                     progress = self.world.get_entity_growth_progress(x, y, self.tick)
-                    ent_color = COLORS["resource_grass"] if entity == Entities.Grass else COLORS["resource_stone"]
-                    # 从小到大：半径 1~5，与地面颜色区分
-                    radius = max(1, int(1 + progress * 4))
-                    pygame.draw.circle(self.screen, ent_color, center, radius)
+                    ent_surf = _assets.get_resource_surface(entity, ts, progress)
+                    if ent_surf is not None:
+                        self.screen.blit(ent_surf, (center[0] - ent_surf.get_width() // 2, center[1] - ent_surf.get_height() // 2))
+                    else:
+                        ent_color = (
+                        COLORS["resource_grass"] if entity == Entities.Grass
+                        else COLORS["resource_tree"] if entity == Entities.Tree
+                        else COLORS["resource_wood"] if entity == Entities.Bush
+                        else COLORS["resource_stone"]
+                    )
+                        radius = max(1, int(1 + progress * 4))
+                        pygame.draw.circle(self.screen, ent_color, center, radius)
     
     def _render_player(self, camera_x: int, camera_y: int) -> None:
-        """渲染玩家；采集时显示顺时针旋转变色弧（12点起，一圈=采集完成）"""
+        """渲染玩家；有素材用贴图，否则程序绘制带眼睛的机器人"""
         ts = self.tile_size
         px = self.player.x * ts - camera_x + ts // 2
         py = (self.world.height - 1 - self.player.y) * ts - camera_y + ts // 2
         r = ts // 2 - 4
-        # 使用半透明绘制机器人
         d = (r + 2) * 2 + 4
-        surf = pygame.Surface((d, d), pygame.SRCALPHA)
-        center = (d // 2, d // 2)
-        surf.fill((0, 0, 0, 0))
-        pygame.draw.circle(surf, (*COLORS["player_outline"], 180), center, r + 2)
-        pygame.draw.circle(surf, (*COLORS["player"], 180), center, r)
-        self.screen.blit(surf, (px - d // 2, py - d // 2))
+        robot_surf = _assets.get_robot_surface(ts)
+        if robot_surf is not None:
+            self.screen.blit(robot_surf, (px - robot_surf.get_width() // 2, py - robot_surf.get_height() // 2))
+        else:
+            surf = pygame.Surface((d, d), pygame.SRCALPHA)
+            center = (d // 2, d // 2)
+            surf.fill((0, 0, 0, 0))
+            pygame.draw.circle(surf, (*COLORS["player_outline"], 200), center, r + 2)
+            pygame.draw.circle(surf, (*COLORS["player"], 200), center, r)
+            # 简单眼睛
+            eye_r = max(1, r // 5)
+            eye_off = max(2, r // 3)
+            pygame.draw.circle(surf, (*COLORS["player_eye"], 255), (center[0] - eye_off, center[1] - eye_off), eye_r)
+            pygame.draw.circle(surf, (*COLORS["player_eye"], 255), (center[0] + eye_off, center[1] - eye_off), eye_r)
+            self.screen.blit(surf, (px - d // 2, py - d // 2))
         # 采集中/种植中：机器人的圆上叠加顺时针旋转弧（12点起，一圈=完成）
         is_collecting = self._pending_op and self._pending_op[0] == "collect"
         is_planting = self._pending_op and self._pending_op[0] == "plant"
@@ -556,6 +615,10 @@ class GameEngine:
                 entity = self._pending_op[1]
             if entity == Entities.Grass:
                 arc_color = COLORS["resource_grass"]
+            elif entity == Entities.Tree:
+                arc_color = COLORS["resource_tree"]
+            elif entity == Entities.Bush:
+                arc_color = COLORS["resource_wood"]
             else:
                 arc_color = COLORS["resource_stone"]
             rect = pygame.Rect(px - r, py - r, r * 2, r * 2)
@@ -568,7 +631,12 @@ class GameEngine:
 
     def _spawn_plant_particles(self, tx: int, ty: int, entity_type: str) -> None:
         """种植成功时在格子周围生成粒子效果"""
-        color = COLORS["resource_grass"] if entity_type == Entities.Grass else COLORS["resource_stone"]
+        color = (
+            COLORS["resource_grass"] if entity_type == Entities.Grass
+            else COLORS["resource_tree"] if entity_type == Entities.Tree
+            else COLORS["resource_wood"] if entity_type == Entities.Bush
+            else COLORS["resource_stone"]
+        )
         cx, cy = tx + 0.5, ty + 0.5
         for _ in range(14):
             angle = random.uniform(0, 2 * math.pi)
@@ -607,27 +675,39 @@ class GameEngine:
                 self.screen.blit(surf, (sx - size - 1, sy - size - 1))
     
     def _render_ui(self) -> None:
-        """渲染 UI"""
-        # 左下角: 背包和属性
-        ui_y = self.height - 100
-        pygame.draw.rect(self.screen, COLORS["ui_bg"], (10, ui_y - 10, 300, 90))
-        
+        """渲染 UI - 左下角资源面板 + 底部快捷键栏（分离避免重叠）"""
+        # 快捷键栏：贴底单独一行，始终完整可见
+        bar_h = 28
+        bar_y = self.height - bar_h - 4
+        bar_rect = pygame.Rect(8, bar_y, self.width - 16, bar_h)
+        pygame.draw.rect(self.screen, (38, 42, 52), bar_rect, border_radius=6)
+        pygame.draw.rect(self.screen, (58, 64, 78), bar_rect, 2, border_radius=6)
         run_status = "运行中" if self.is_running else "已停止"
         save_hint = f" [F5]保存 [F9]读档" + (f" 槽位{self.current_save_slot}" if self.current_save_slot else "")
+        bar_text = f"程序: {run_status}  [Esc]菜单 [F1]百科 [{_MOD_LABEL}+E]编辑器 [{_MOD_LABEL}+T]终端 [F2]执行 [F3]停止 [{_MOD_LABEL}+U]升级{save_hint}"
+        surf = self.font.render(bar_text, True, (225, 230, 240))
+        self.screen.blit(surf, (20, bar_y + (bar_h - surf.get_height()) // 2 - 1))
+        # 资源面板：在快捷键栏上方，不重叠
+        panel_h = 76
+        panel_w = 420
+        panel_y = bar_y - panel_h - 8
+        panel = pygame.Rect(12, panel_y, panel_w, panel_h)
+        _draw_rounded_panel(self.screen, panel, (42, 46, 54), (65, 72, 88), UI["radius"], shadow=True)
+        if self.is_running:
+            status_color = (100, 200, 120)
+            status_text = "程序执行中 · 机器人由你的代码控制"
+        else:
+            status_color = (255, 195, 90)
+            status_text = "程序已停止 · 编写代码后按 F2 执行"
+        st = self.font.render(status_text, True, status_color)
+        self.screen.blit(st, (24, panel_y + 6))
         texts = [
-            f"草: {self.player.inventory.get(RESOURCE_GRASS, 0)}  石头: {self.player.inventory.get(RESOURCE_STONE, 0)}",
-            f"移动: {self.player.move_speed:.1f}  采集: {self.player.collect_speed:.1f}",
-            f"程序: {run_status}  [Esc]菜单 [F1]百科 [{_MOD_LABEL}+E]编辑器 [{_MOD_LABEL}+T]终端 [F2]执行 [F3]停止 [{_MOD_LABEL}+U]升级树{save_hint}",
+            f"草: {self.player.inventory.get(RESOURCE_GRASS, 0)}    石头: {self.player.inventory.get(RESOURCE_STONE, 0)}    木头: {self.player.inventory.get(RESOURCE_WOOD, 0)}",
+            f"移动: {self.player.move_speed:.1f}    采集: {self.player.collect_speed:.1f}",
         ]
         for i, text in enumerate(texts):
-            surf = self.font.render(text, True, COLORS["ui_text"])
-            self.screen.blit(surf, (20, ui_y + i * 22))
-        
-        if self.is_running:
-            surf = self.font.render("程序执行中 - 机器人由你的代码控制", True, (150, 255, 150))
-        else:
-            surf = self.font.render("程序已停止 - 在编辑器中编写代码后按 F2 执行", True, (255, 200, 100))
-        self.screen.blit(surf, (20, ui_y - 25))
+            surf = self.font.render(text, True, (225, 228, 235))
+            self.screen.blit(surf, (24, panel_y + 30 + i * 22))
     
     def _get_upgrade_panel_rect(self) -> Tuple[int, int, int, int]:
         """返回升级面板 (px, py, w, h)"""
@@ -662,20 +742,13 @@ class GameEngine:
     def _render_upgrade_tree_panel(self) -> None:
         """渲染紧凑升级卡片：采集/移速/地图 三列，点击升级"""
         px, py, panel_w, panel_h = self._get_upgrade_panel_rect()
-        
-        # 背景
-        surf = pygame.Surface((panel_w, panel_h))
-        surf.set_alpha(248)
-        surf.fill((28, 32, 40))
-        self.screen.blit(surf, (px, py))
-        pygame.draw.rect(self.screen, (70, 80, 95), (px, py, panel_w, panel_h), 2)
-        pygame.draw.rect(self.screen, (90, 100, 120), (px, py, panel_w, panel_h), 1)
-        
-        # 标题
-        title = self.font_large.render("升级", True, (255, 230, 140))
-        self.screen.blit(title, (px + (panel_w - title.get_width()) // 2, py + 12))
-        hint = self.font.render("按 U 关闭  |  点击卡片升级", True, (150, 155, 165))
-        self.screen.blit(hint, (px + (panel_w - hint.get_width()) // 2, py + 48))
+        panel = pygame.Rect(px, py, panel_w, panel_h)
+        _draw_rounded_panel(self.screen, panel, (30, 34, 44), (75, 85, 105), UI["radius"], shadow=True)
+        pygame.draw.rect(self.screen, (42, 48, 60), (px + 2, py + 2, panel_w - 4, 38), border_radius=6)
+        title = self.font_large.render("升级", True, (255, 235, 150))
+        self.screen.blit(title, (px + (panel_w - title.get_width()) // 2, py + 10))
+        hint = self.font.render("按 U 关闭  ·  点击卡片升级", True, (140, 148, 168))
+        self.screen.blit(hint, (px + (panel_w - hint.get_width()) // 2, py + 44))
         
         ut = self.player.upgrade_tree
         margin = 16
@@ -694,12 +767,12 @@ class GameEngine:
             is_maxed = level >= max_level
             
             # 卡片背景
-            bg = (45, 52, 62) if not can_buy and not is_maxed else (50, 58, 70)
+            bg = (42, 48, 58) if not can_buy and not is_maxed else (48, 55, 68)
             if can_buy:
-                bg = (55, 65, 50)
-            pygame.draw.rect(self.screen, bg, rect)
-            border_c = (90, 200, 110) if can_buy else (70, 75, 85)
-            pygame.draw.rect(self.screen, border_c, rect, 2)
+                bg = (52, 62, 48)
+            pygame.draw.rect(self.screen, bg, rect, border_radius=6)
+            border_c = (85, 190, 105) if can_buy else (68, 72, 82)
+            pygame.draw.rect(self.screen, border_c, rect, 2, border_radius=6)
             
             # 分支名
             name = ut.CHAIN_NAMES[branch]
@@ -731,13 +804,9 @@ class GameEngine:
         p.clamp_to_screen(self.width, self.height)
         
         r = p.rect()
-        # 面板背景
-        pygame.draw.rect(self.screen, (28, 30, 36), r)
-        pygame.draw.rect(self.screen, (70, 75, 90), r, 2)
-        
-        # 标题栏
+        _draw_rounded_panel(self.screen, r, (30, 33, 42), (72, 78, 92), UI["radius_sm"], shadow=True)
         tr = p.title_rect()
-        pygame.draw.rect(self.screen, (45, 48, 55), tr)
+        pygame.draw.rect(self.screen, (42, 46, 56), (r.x + 2, r.y + 2, r.w - 4, tr.h - 2), border_radius=4)
         pygame.draw.line(self.screen, (60, 65, 80), (r.x, r.y + tr.h), (r.x + r.w, r.y + tr.h))
         title = self.font.render("编辑器", True, (220, 225, 235))
         self.screen.blit(title, (r.x + 10, r.y + 4))
@@ -745,14 +814,14 @@ class GameEngine:
         if p.minimized:
             # 最小化时只显示展开按钮
             exp_rect = pygame.Rect(r.x + r.w - 50, r.y + 6, 40, 20)
-            pygame.draw.rect(self.screen, (70, 90, 120), exp_rect)
+            pygame.draw.rect(self.screen, (68, 92, 118), exp_rect, border_radius=4)
             exp_txt = self.font.render("展开", True, (255, 255, 255))
             self.screen.blit(exp_txt, (exp_rect.x + (exp_rect.w - exp_txt.get_width()) // 2, exp_rect.y + 2))
             return
         
         # 最小化按钮
         min_rect = pygame.Rect(r.x + r.w - 50, r.y + 6, 40, 20)
-        pygame.draw.rect(self.screen, (60, 70, 90), min_rect)
+        pygame.draw.rect(self.screen, (58, 68, 88), min_rect, border_radius=4)
         min_txt = self.font.render("-", True, (255, 255, 255))
         self.screen.blit(min_txt, (min_rect.x + (min_rect.w - min_txt.get_width()) // 2, min_rect.y + 2))
         
@@ -776,8 +845,8 @@ class GameEngine:
                 tw += close_btn_w
             tab_rect = pygame.Rect(tab_x, content.y, tw, tab_h - 2)
             is_current = fname == self.editor_current_file
-            color = (55, 60, 72) if is_current else (40, 43, 50)
-            pygame.draw.rect(self.screen, color, tab_rect)
+            color = (52, 58, 70) if is_current else (38, 42, 50)
+            pygame.draw.rect(self.screen, color, tab_rect, border_radius=4)
             if is_current:
                 pygame.draw.line(self.screen, (70, 75, 90), (tab_rect.x, tab_rect.bottom), (tab_rect.right, tab_rect.bottom), 2)
             if is_renaming:
@@ -799,10 +868,22 @@ class GameEngine:
         # "+" 按钮
         plus_size = tab_h - 6
         plus_rect = pygame.Rect(tab_x, content.y + 3, plus_size, plus_size)
-        pygame.draw.rect(self.screen, (50, 90, 60), plus_rect)
+        pygame.draw.rect(self.screen, (48, 88, 58), plus_rect, border_radius=4)
         plus_txt = self.font.render("+", True, (255, 255, 255))
         self.screen.blit(plus_txt, (plus_rect.x + (plus_rect.w - plus_txt.get_width()) // 2, plus_rect.y))
-        editor_colors = {"bg": (25, 28, 32), "border": (55, 60, 70), "text": (220, 220, 220)}
+        editor_colors = {
+            "bg": (22, 25, 30),
+            "border": (58, 64, 78),
+            "text": (225, 228, 235),
+            "line_num": (95, 102, 118),
+            "line_num_bg": (28, 30, 38),
+            "scrollbar": (45, 48, 58),
+            "scrollbar_thumb": (82, 90, 108),
+            "selection": (60, 100, 160, 100),
+            "completion_bg": (32, 36, 46),
+            "completion_border": (68, 75, 92),
+            "completion_highlight": (55, 62, 78),
+        }
         visible_lines = max(1, (code_rect.h - 8 - self.editor.SCROLLBAR_W) // self.editor.line_height)
         self.editor.set_project_files(self.editor_files, self.editor_current_file)
         self.editor.render(self.screen, code_rect, editor_colors, visible_lines, highlight=True)
@@ -810,8 +891,8 @@ class GameEngine:
         btn_y = content.y + content.h - btn_h - 4
         btn1 = pygame.Rect(content.x + 10, btn_y, 100, btn_h - 4)
         btn2 = pygame.Rect(content.x + 120, btn_y, 100, btn_h - 4)
-        pygame.draw.rect(self.screen, (50, 130, 70), btn1)
-        pygame.draw.rect(self.screen, (130, 50, 50), btn2)
+        pygame.draw.rect(self.screen, (48, 125, 68), btn1, border_radius=4)
+        pygame.draw.rect(self.screen, (125, 48, 48), btn2, border_radius=4)
         t1 = self.font.render("开始执行", True, (255, 255, 255))
         t2 = self.font.render("停止执行", True, (255, 255, 255))
         self.screen.blit(t1, (btn1.x + (btn1.w - t1.get_width()) // 2, btn1.y + 6))
@@ -999,17 +1080,16 @@ class GameEngine:
         
         px = (self.width - panel_w) // 2
         py = (self.height - panel_h) // 2
+        panel = pygame.Rect(px, py, panel_w, panel_h)
         
         overlay = pygame.Surface((self.width, self.height))
-        overlay.set_alpha(180)
-        overlay.fill((15, 18, 22))
+        overlay.set_alpha(UI["overlay_alpha"])
+        overlay.fill((12, 15, 20))
         self.screen.blit(overlay, (0, 0))
-        
-        pygame.draw.rect(self.screen, (32, 35, 42), (px, py, panel_w, panel_h))
-        pygame.draw.rect(self.screen, (70, 80, 95), (px, py, panel_w, panel_h), 2)
-        
-        title = self.font.render("游戏百科  F1/Esc 关闭", True, (255, 230, 140))
-        self.screen.blit(title, (px + (panel_w - title.get_width()) // 2, py + 12))
+        _draw_rounded_panel(self.screen, panel, (32, 36, 46), (72, 82, 98), UI["radius"], shadow=True)
+        pygame.draw.rect(self.screen, (42, 46, 58), (px + 4, py + 4, panel_w - 8, 36), border_radius=6)
+        title = self.font.render("游戏百科  ·  F1/Esc 关闭", True, (255, 235, 150))
+        self.screen.blit(title, (px + (panel_w - title.get_width()) // 2, py + 10))
         
         content_y = py + 44
         content_h = panel_h - 52
@@ -1031,11 +1111,11 @@ class GameEngine:
         
         if len(display_lines) > vis_lines:
             sb_h = content_h
-            thumb_h = max(20, int(sb_h * vis_lines / len(display_lines)))
+            thumb_h = max(24, int(sb_h * vis_lines / len(display_lines)))
             thumb_y = content_y + int((sb_h - thumb_h) * self._wiki_scroll / max(1, max_scroll))
             sb_x = px + panel_w - pad - sb_w
-            pygame.draw.rect(self.screen, (50, 52, 58), (sb_x, content_y, sb_w, sb_h))
-            pygame.draw.rect(self.screen, (90, 95, 105), (sb_x, thumb_y, sb_w, thumb_h))
+            pygame.draw.rect(self.screen, (48, 52, 62), (sb_x, content_y, sb_w, sb_h), border_radius=4)
+            pygame.draw.rect(self.screen, (85, 92, 108), (sb_x + 1, thumb_y + 1, sb_w - 2, thumb_h - 2), border_radius=4)
     
     def _wiki_handle_events(self, event: pygame.event.Event) -> bool:
         """处理百科面板滚轮"""
@@ -1063,24 +1143,24 @@ class GameEngine:
         rects = self._get_game_menu_button_rects()
         panel = rects["_panel"]
         overlay = pygame.Surface((self.width, self.height))
-        overlay.set_alpha(200)
-        overlay.fill((15, 18, 22))
+        overlay.set_alpha(UI["overlay_alpha"])
+        overlay.fill((12, 15, 20))
         self.screen.blit(overlay, (0, 0))
-        pygame.draw.rect(self.screen, (35, 40, 48), panel)
-        pygame.draw.rect(self.screen, (70, 80, 95), panel, 2)
-        title = self.font_large.render("游戏菜单", True, (255, 230, 140))
-        self.screen.blit(title, (panel.x + (panel.w - title.get_width()) // 2, panel.y + 25))
-        hint = self.font.render("按 Esc 关闭", True, (130, 135, 140))
-        self.screen.blit(hint, (panel.x + (panel.w - hint.get_width()) // 2, panel.y + 58))
+        _draw_rounded_panel(self.screen, panel, (38, 42, 52), (78, 88, 105), UI["radius"], shadow=True)
+        pygame.draw.rect(self.screen, (48, 52, 65), (panel.x + 4, panel.y + 4, panel.w - 8, 42), border_radius=6)
+        title = self.font_large.render("游戏菜单", True, (255, 235, 150))
+        self.screen.blit(title, (panel.x + (panel.w - title.get_width()) // 2, panel.y + 22))
+        hint = self.font.render("按 Esc 关闭", True, (120, 128, 142))
+        self.screen.blit(hint, (panel.x + (panel.w - hint.get_width()) // 2, panel.y + 55))
         for label, r in rects.items():
             if label.startswith("_"):
                 continue
             mx, my = pygame.mouse.get_pos()
             hover = r.collidepoint(mx, my)
-            color = (60, 120, 80) if hover else (50, 55, 65)
-            pygame.draw.rect(self.screen, color, r)
-            pygame.draw.rect(self.screen, (90, 100, 115), r, 2)
-            txt = self.font.render(label, True, (255, 255, 255))
+            color = (58, 110, 75) if hover else (48, 52, 62)
+            pygame.draw.rect(self.screen, color, r, border_radius=6)
+            pygame.draw.rect(self.screen, (88, 98, 112), r, 2, border_radius=6)
+            txt = self.font.render(label, True, (240, 242, 248))
             self.screen.blit(txt, (r.x + (r.w - txt.get_width()) // 2, r.y + (r.h - txt.get_height()) // 2 - 2))
     
     def _get_settings_button_rects(self) -> Dict:
@@ -1116,46 +1196,45 @@ class GameEngine:
         rects = self._get_settings_button_rects()
         panel = rects["_panel"]
         overlay = pygame.Surface((self.width, self.height))
-        overlay.set_alpha(200)
-        overlay.fill((15, 18, 22))
+        overlay.set_alpha(UI["overlay_alpha"])
+        overlay.fill((12, 15, 20))
         self.screen.blit(overlay, (0, 0))
-        pygame.draw.rect(self.screen, (35, 40, 48), panel)
-        pygame.draw.rect(self.screen, (70, 80, 95), panel, 2)
-        title = self.font_large.render("游戏设置", True, (255, 230, 140))
-        self.screen.blit(title, (panel.x + (panel.w - title.get_width()) // 2, panel.y + 20))
-        lbl = self.font.render("格子大小:", True, (200, 205, 210))
-        self.screen.blit(lbl, (panel.x + 20, panel.y + 65))
+        _draw_rounded_panel(self.screen, panel, (36, 40, 50), (75, 85, 100), UI["radius"], shadow=True)
+        pygame.draw.rect(self.screen, (44, 48, 60), (panel.x + 4, panel.y + 4, panel.w - 8, 40), border_radius=6)
+        title = self.font_large.render("游戏设置", True, (255, 235, 150))
+        self.screen.blit(title, (panel.x + (panel.w - title.get_width()) // 2, panel.y + 16))
+        lbl = self.font.render("格子大小", True, (195, 202, 215))
+        self.screen.blit(lbl, (panel.x + 24, panel.y + 62))
         for val, r in rects["tile_sizes"]:
             mx, my = pygame.mouse.get_pos()
             hover = r.collidepoint(mx, my)
             sel = self.tile_size == val
-            color = (70, 90, 60) if sel else ((55, 65, 75) if hover else (45, 50, 58))
-            pygame.draw.rect(self.screen, color, r)
-            pygame.draw.rect(self.screen, (85, 95, 110), r, 2)
-            txt = self.font.render("小" if val == 32 else "中" if val == 40 else "大", True, (220, 225, 230))
+            color = (65, 85, 58) if sel else ((52, 62, 72) if hover else (42, 48, 56))
+            pygame.draw.rect(self.screen, color, r, border_radius=6)
+            pygame.draw.rect(self.screen, (82, 92, 108), r, 2, border_radius=6)
+            txt = self.font.render("小" if val == 32 else "中" if val == 40 else "大", True, (225, 230, 238))
             self.screen.blit(txt, (r.x + (r.w - txt.get_width()) // 2, r.y + 8))
-        # 显示模式
-        lbl2 = self.font.render("显示模式:", True, (200, 205, 210))
-        self.screen.blit(lbl2, (panel.x + 20, panel.y + 125))
+        lbl2 = self.font.render("显示模式", True, (195, 202, 215))
+        self.screen.blit(lbl2, (panel.x + 24, panel.y + 122))
         for key, r in [("fullscreen_btn", rects["fullscreen_btn"]), ("windowed_btn", rects["windowed_btn"])]:
             mx, my = pygame.mouse.get_pos()
             hover = r.collidepoint(mx, my)
             sel = (key == "fullscreen_btn" and self.fullscreen) or (key == "windowed_btn" and not self.fullscreen)
-            color = (70, 90, 60) if sel else ((55, 65, 75) if hover else (45, 50, 58))
-            pygame.draw.rect(self.screen, color, r)
-            pygame.draw.rect(self.screen, (85, 95, 110), r, 2)
-            txt = self.font.render("全屏" if key == "fullscreen_btn" else "窗口", True, (220, 225, 230))
+            color = (65, 85, 58) if sel else ((52, 62, 72) if hover else (42, 48, 56))
+            pygame.draw.rect(self.screen, color, r, border_radius=6)
+            pygame.draw.rect(self.screen, (82, 92, 108), r, 2, border_radius=6)
+            txt = self.font.render("全屏" if key == "fullscreen_btn" else "窗口", True, (225, 230, 238))
             self.screen.blit(txt, (r.x + (r.w - txt.get_width()) // 2, r.y + 8))
         for key in ["back", "main_menu_btn"]:
             r = rects[key]
             mx, my = pygame.mouse.get_pos()
             hover = r.collidepoint(mx, my)
-            color = (55, 75, 65) if hover else (55, 65, 75)
-            pygame.draw.rect(self.screen, color, r)
-            pygame.draw.rect(self.screen, (80, 90, 105), r, 2)
-        bt = self.font.render("返回", True, (255, 255, 255))
+            color = (52, 72, 62) if hover else (50, 58, 70)
+            pygame.draw.rect(self.screen, color, r, border_radius=6)
+            pygame.draw.rect(self.screen, (78, 88, 102), r, 2, border_radius=6)
+        bt = self.font.render("返回", True, (245, 248, 252))
         self.screen.blit(bt, (rects["back"].x + (rects["back"].w - bt.get_width()) // 2, rects["back"].y + 8))
-        bt2 = self.font.render("返回主菜单", True, (255, 255, 255))
+        bt2 = self.font.render("返回主菜单", True, (245, 248, 252))
         self.screen.blit(bt2, (rects["main_menu_btn"].x + (rects["main_menu_btn"].w - bt2.get_width()) // 2, rects["main_menu_btn"].y + 8))
     
     def _editor_button_rects(self) -> Tuple[pygame.Rect, pygame.Rect]:
@@ -1223,9 +1302,9 @@ class GameEngine:
         panel_w, panel_h = 520, 340
         px = (w - panel_w) // 2
         py = 180
-        pygame.draw.rect(self.screen, (32, 36, 44), (px, py, panel_w, panel_h))
-        pygame.draw.rect(self.screen, (55, 62, 75), (px, py, panel_w, panel_h), 2)
-        pygame.draw.rect(self.screen, (45, 50, 60), (px + 2, py + 2, panel_w - 4, 50))
+        panel = pygame.Rect(px, py, panel_w, panel_h)
+        _draw_rounded_panel(self.screen, panel, (34, 38, 48), (60, 68, 82), UI["radius"], shadow=True)
+        pygame.draw.rect(self.screen, (44, 48, 60), (px + 4, py + 4, panel_w - 8, 48), border_radius=6)
         panel_title = self.font_large.render("选择存档位", True, (220, 230, 240))
         self.screen.blit(panel_title, (px + (panel_w - panel_title.get_width()) // 2, py + 10))
         hint = self.font.render("方向键/数字键选择 · 回车开始 · 点击按钮执行操作", True, (120, 130, 145))
@@ -1245,10 +1324,10 @@ class GameEngine:
             rects.append((r, slot_id))
             save_info = next((s for s in saves if s["slot_id"] == slot_id), None)
             is_highlight = hover == slot_id
-            bg = (50, 65, 45) if is_highlight else ((42, 48, 58) if save_info else (38, 42, 50))
-            pygame.draw.rect(self.screen, bg, r)
-            border_c = (100, 200, 120) if is_highlight else ((70, 78, 95) if save_info else (55, 60, 72))
-            pygame.draw.rect(self.screen, border_c, r, 2)
+            bg = (48, 62, 42) if is_highlight else ((40, 46, 56) if save_info else (36, 40, 48))
+            pygame.draw.rect(self.screen, bg, r, border_radius=6)
+            border_c = (95, 195, 115) if is_highlight else ((68, 76, 92) if save_info else (52, 58, 70))
+            pygame.draw.rect(self.screen, border_c, r, 2, border_radius=6)
             num = self.font_large.render(str(slot_id), True, (200, 210, 225))
             self.screen.blit(num, (r.centerx - num.get_width() // 2, r.top + 8))
             if save_info:
@@ -1264,9 +1343,9 @@ class GameEngine:
         mx, my = pygame.mouse.get_pos()
         for key, r in btn_rects.items():
             hov = r.collidepoint(mx, my) and mode == "main"
-            color = (55, 90, 65) if hov else (45, 52, 60)
-            pygame.draw.rect(self.screen, color, r)
-            pygame.draw.rect(self.screen, (85, 95, 110), r, 2)
+            color = (52, 88, 62) if hov else (42, 50, 58)
+            pygame.draw.rect(self.screen, color, r, border_radius=6)
+            pygame.draw.rect(self.screen, (82, 92, 108), r, 2, border_radius=6)
         labels = {"start": "开始游戏", "delete": "删除存档", "settings": "游戏设置"}
         for key, r in btn_rects.items():
             txt = self.font.render(labels[key], True, (220, 230, 240))
@@ -1296,11 +1375,11 @@ class GameEngine:
         px = (w - pop_w) // 2
         py = (h - pop_h) // 2
         overlay = pygame.Surface((w, h))
-        overlay.set_alpha(180)
-        overlay.fill((15, 18, 22))
+        overlay.set_alpha(UI["overlay_alpha"])
+        overlay.fill((12, 15, 20))
         self.screen.blit(overlay, (0, 0))
-        pygame.draw.rect(self.screen, (38, 42, 52), (px, py, pop_w, pop_h))
-        pygame.draw.rect(self.screen, (70, 78, 95), (px, py, pop_w, pop_h), 2)
+        pop_rect = pygame.Rect(px, py, pop_w, pop_h)
+        _draw_rounded_panel(self.screen, pop_rect, (40, 44, 56), (72, 80, 98), UI["radius"], shadow=True)
         msg = f"确定删除存档 {selected} 吗？" if slot_has_save else f"存档 {selected} 为空，无需删除"
         title = self.font_large.render(msg, True, (240, 240, 245))
         self.screen.blit(title, (px + (pop_w - title.get_width()) // 2, py + 35))
@@ -1308,8 +1387,8 @@ class GameEngine:
         self.screen.blit(warn, (px + (pop_w - warn.get_width()) // 2, py + 80))
         ok_rect, cancel_rect = self._get_delete_confirm_rects(selected)
         for r in [ok_rect, cancel_rect]:
-            pygame.draw.rect(self.screen, (50, 55, 65), r)
-            pygame.draw.rect(self.screen, (80, 90, 105), r, 2)
+            pygame.draw.rect(self.screen, (48, 52, 62), r, border_radius=6)
+            pygame.draw.rect(self.screen, (78, 88, 102), r, 2, border_radius=6)
         ok_txt = self.font.render("确定删除", True, (255, 100, 100) if slot_has_save else (150, 150, 150))
         self.screen.blit(ok_txt, (ok_rect.centerx - ok_txt.get_width() // 2, ok_rect.centery - ok_txt.get_height() // 2 - 1))
         cancel_txt = self.font.render("取消", True, (255, 255, 255))
@@ -1518,7 +1597,7 @@ class GameEngine:
                 continue
             
             if show_delete_menu:
-                del_main_btn = pygame.Rect(self.width // 2 - 55, self.height // 2 + 120, 110, 36)
+                del_main_btn = pygame.Rect(self.width // 2 - 55, self.height // 2 + 115, 110, 36)
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         running = False
@@ -1551,16 +1630,25 @@ class GameEngine:
                 if show_delete_menu and running:
                     self.screen.fill(COLORS["background"])
                     overlay = pygame.Surface((self.width, self.height))
-                    overlay.set_alpha(220)
-                    overlay.fill((20, 20, 25))
+                    overlay.set_alpha(210)
+                    overlay.fill((18, 20, 26))
                     self.screen.blit(overlay, (0, 0))
-                    y = self.height // 2 - 130
-                    title = self.font_large.render("删除存档 (按 1-9/0 选择, Esc 取消)", True, (255, 255, 255))
+                    # 居中面板
+                    d_panel_w, d_panel_h = 460, 320
+                    dpx = (self.width - d_panel_w) // 2
+                    dpy = (self.height - d_panel_h) // 2
+                    dpanel = pygame.Rect(dpx, dpy, d_panel_w, d_panel_h)
+                    _draw_rounded_panel(self.screen, dpanel, (34, 38, 48), (65, 75, 92), UI["radius"], shadow=True)
+                    y = dpy + 30
+                    title = self.font_large.render("删除存档", True, (250, 252, 255))
                     self.screen.blit(title, (self.width // 2 - title.get_width() // 2, y))
-                    y += 35
-                    warn = self.font.render("注意: 删除后无法恢复", True, (255, 150, 100))
+                    y += 28
+                    hint = self.font.render("按 1-9/0 选择  ·  Esc 取消", True, (140, 148, 165))
+                    self.screen.blit(hint, (self.width // 2 - hint.get_width() // 2, y))
+                    y += 32
+                    warn = self.font.render("注意: 删除后无法恢复", True, (255, 140, 90))
                     self.screen.blit(warn, (self.width // 2 - warn.get_width() // 2, y))
-                    y += 35
+                    y += 32
                     from .save_manager import MAX_SLOTS, list_saves
                     saves = list_saves()
                     for slot_id in range(1, MAX_SLOTS + 1):
@@ -1570,7 +1658,7 @@ class GameEngine:
                             label = f"  [{key}] 存档{slot_id}: {save_info['name']} - {save_info['summary']}"
                         else:
                             label = f"  [{key}] 存档{slot_id}: (空)"
-                        txt = self.font.render(label, True, (220, 220, 220))
+                        txt = self.font.render(label, True, (225, 228, 235))
                         self.screen.blit(txt, (self.width // 2 - 220, y))
                         y += 26
                     if delete_toast_frames > 0:
@@ -1580,8 +1668,8 @@ class GameEngine:
                     # 返回主菜单按钮
                     mx, my = pygame.mouse.get_pos()
                     hov = del_main_btn.collidepoint(mx, my)
-                    pygame.draw.rect(self.screen, (55, 75, 65) if hov else (50, 55, 65), del_main_btn)
-                    pygame.draw.rect(self.screen, (80, 90, 105), del_main_btn, 2)
+                    pygame.draw.rect(self.screen, (52, 72, 62) if hov else (48, 52, 62), del_main_btn, border_radius=6)
+                    pygame.draw.rect(self.screen, (78, 88, 102), del_main_btn, 2, border_radius=6)
                     bt = self.font.render("返回主菜单", True, (255, 255, 255))
                     self.screen.blit(bt, (del_main_btn.centerx - bt.get_width() // 2, del_main_btn.centery - bt.get_height() // 2 - 1))
                     pygame.display.flip()
@@ -1623,13 +1711,21 @@ class GameEngine:
                 if show_load_menu and running:
                     self.screen.fill(COLORS["background"])
                     overlay = pygame.Surface((self.width, self.height))
-                    overlay.set_alpha(220)
-                    overlay.fill((20, 20, 25))
+                    overlay.set_alpha(210)
+                    overlay.fill((18, 20, 26))
                     self.screen.blit(overlay, (0, 0))
-                    y = self.height // 2 - 120
-                    title = self.font_large.render("读档 (按 1-9/0 选择, Esc 取消)", True, (255, 255, 255))
+                    l_panel_w, l_panel_h = 440, 350
+                    lpx = (self.width - l_panel_w) // 2
+                    lpy = (self.height - l_panel_h) // 2
+                    lpanel = pygame.Rect(lpx, lpy, l_panel_w, l_panel_h)
+                    _draw_rounded_panel(self.screen, lpanel, (34, 38, 48), (65, 75, 92), UI["radius"], shadow=True)
+                    y = lpy + 28
+                    title = self.font_large.render("读档", True, (250, 252, 255))
                     self.screen.blit(title, (self.width // 2 - title.get_width() // 2, y))
-                    y += 50
+                    y += 32
+                    lhint = self.font.render("按 1-9/0 选择  ·  Esc 取消", True, (140, 148, 165))
+                    self.screen.blit(lhint, (self.width // 2 - lhint.get_width() // 2, y))
+                    y += 40
                     from .save_manager import MAX_SLOTS, list_saves
                     saves = list_saves()
                     for slot_id in range(1, MAX_SLOTS + 1):
@@ -1639,13 +1735,13 @@ class GameEngine:
                             label = f"  [{key}] 存档{slot_id}: {save_info['summary']}"
                         else:
                             label = f"  [{key}] 存档{slot_id}: (空)"
-                        txt = self.font.render(label, True, (220, 220, 220))
+                        txt = self.font.render(label, True, (225, 228, 235))
                         self.screen.blit(txt, (self.width // 2 - 200, y))
                         y += 26
                     mx, my = pygame.mouse.get_pos()
                     hov = load_main_btn.collidepoint(mx, my)
-                    pygame.draw.rect(self.screen, (55, 75, 65) if hov else (50, 55, 65), load_main_btn)
-                    pygame.draw.rect(self.screen, (80, 90, 105), load_main_btn, 2)
+                    pygame.draw.rect(self.screen, (52, 72, 62) if hov else (48, 52, 62), load_main_btn, border_radius=6)
+                    pygame.draw.rect(self.screen, (78, 88, 102), load_main_btn, 2, border_radius=6)
                     bt = self.font.render("返回主菜单", True, (255, 255, 255))
                     self.screen.blit(bt, (load_main_btn.centerx - bt.get_width() // 2, load_main_btn.centery - bt.get_height() // 2 - 1))
                     pygame.display.flip()
@@ -1798,10 +1894,12 @@ class GameEngine:
             
             if save_toast_frames > 0:
                 save_toast_frames -= 1
-                toast = self.font_large.render("已保存!", True, (100, 255, 100))
+                toast = self.font_large.render("已保存", True, (120, 255, 120))
                 tx = self.width // 2 - toast.get_width() // 2
-                ty = self.height // 2 - 20
-                pygame.draw.rect(self.screen, (40, 40, 45), (tx - 10, ty - 5, toast.get_width() + 20, toast.get_height() + 10))
+                ty = self.height // 2 - 22
+                tr = pygame.Rect(tx - 20, ty - 8, toast.get_width() + 40, toast.get_height() + 16)
+                pygame.draw.rect(self.screen, (42, 48, 55), tr, border_radius=8)
+                pygame.draw.rect(self.screen, (70, 90, 75), tr, 2, border_radius=8)
                 self.screen.blit(toast, (tx, ty))
             
             pygame.display.flip()

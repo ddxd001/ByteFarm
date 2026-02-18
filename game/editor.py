@@ -33,7 +33,7 @@ BUILTIN_NAMES = {
     "get_position", "get_nearby", "get_purchasable", "get_map_size", "get_ground",
     "East", "West", "North", "South",
     "Ground", "Grassland", "Sandyland",
-    "Entities", "Entity", "Grass", "Stone",
+    "Entities", "Entity", "Grass", "Stone", "Bush", "Tree",
 }
 
 # Python 内置函数（与游戏 API 使用相同 builtin 颜色）
@@ -659,8 +659,10 @@ class CodeEditor:
         return False
 
     def render(self, surface: pygame.Surface, rect: pygame.Rect, colors: dict, visible_lines: int, highlight: bool = True) -> None:
-        pygame.draw.rect(surface, colors.get("bg", (25, 28, 32)), rect)
-        pygame.draw.rect(surface, colors.get("border", (60, 65, 75)), rect, 2)
+        bg = colors.get("bg", (22, 25, 30))
+        border = colors.get("border", (58, 64, 78))
+        pygame.draw.rect(surface, bg, rect, border_radius=4)
+        pygame.draw.rect(surface, border, rect, 2, border_radius=4)
 
         sb = self.SCROLLBAR_W
         max_line_w = self._max_line_width_px()
@@ -674,8 +676,9 @@ class CodeEditor:
         if not need_v_scroll:
             content_w = rect.w - self.LINE_NUM_WIDTH - 8
 
-        ln_color = colors.get("line_num", (100, 105, 115))
-        default_color = colors.get("text", (220, 220, 220))
+        ln_color = colors.get("line_num", (95, 102, 118))
+        ln_bg = colors.get("line_num_bg", (28, 30, 38))
+        default_color = colors.get("text", (225, 228, 235))
         text_left = rect.x + self.LINE_NUM_WIDTH + 4
 
         self._clamp_cursor()
@@ -695,11 +698,11 @@ class CodeEditor:
         first_visible = int(self.scroll_y)
         last_visible = min(first_visible + effective_visible, len(self.lines))
 
-        # 行号背景（不含右下角）
+        # 行号背景
         ln_h = rect.h - (sb if need_h_scroll else 0)
-        ln_rect = pygame.Rect(rect.x, rect.y, self.LINE_NUM_WIDTH, ln_h)
-        pygame.draw.rect(surface, (30, 32, 38), ln_rect)
-        pygame.draw.line(surface, (55, 58, 65), (rect.x + self.LINE_NUM_WIDTH, rect.y), (rect.x + self.LINE_NUM_WIDTH, ln_rect.bottom))
+        ln_rect = pygame.Rect(rect.x + 2, rect.y + 2, self.LINE_NUM_WIDTH - 2, ln_h - 4)
+        pygame.draw.rect(surface, ln_bg, ln_rect, border_radius=3)
+        pygame.draw.line(surface, (52, 56, 68), (rect.x + self.LINE_NUM_WIDTH, rect.y + 4), (rect.x + self.LINE_NUM_WIDTH, ln_rect.bottom))
 
         # 代码内容区：裁剪，防止绘制到编辑器外
         content_rect = pygame.Rect(rect.x + self.LINE_NUM_WIDTH + 4, rect.y + 4, content_w, content_h)
@@ -743,8 +746,9 @@ class CodeEditor:
                         sel_w = self.font.size(sel)[0]
                         sel_rect = pygame.Rect(text_left + sw - self.scroll_x, y, sel_w, self.line_height - 2)
                         s = pygame.Surface((sel_w, self.line_height - 2))
-                        s.set_alpha(80)
-                        s.fill((80, 120, 180))
+                        sc = colors.get("selection", (60, 100, 160, 100))
+                        s.set_alpha(sc[3] if len(sc) > 3 else 100)
+                        s.fill(sc[:3] if len(sc) >= 3 else (80, 120, 180))
                         surface.blit(s, sel_rect)
 
             # 光标
@@ -777,33 +781,36 @@ class CodeEditor:
             if popup_y + popup_h > rect.bottom - sb:
                 popup_y = rect.y + 4 + (self.cursor_row - first_visible) * self.line_height - popup_h if first_visible <= self.cursor_row < last_visible else rect.bottom - popup_h - sb - 4
             popup_rect = pygame.Rect(popup_x, popup_y, popup_w, popup_h)
-            pygame.draw.rect(surface, (35, 38, 45), popup_rect)
-            pygame.draw.rect(surface, (70, 75, 90), popup_rect, 2)
+            cp_bg = colors.get("completion_bg", (32, 36, 46))
+            cp_border = colors.get("completion_border", (68, 75, 92))
+            cp_hl = colors.get("completion_highlight", (55, 62, 78))
+            pygame.draw.rect(surface, cp_bg, popup_rect, border_radius=4)
+            pygame.draw.rect(surface, cp_border, popup_rect, 2, border_radius=4)
             for i, item in enumerate(visible_matches):
                 idx = start_idx + i
-                color = (255, 255, 255) if idx == self._completion_index else (200, 205, 215)
+                color = (240, 242, 250) if idx == self._completion_index else (200, 208, 222)
                 if idx == self._completion_index:
-                    pygame.draw.rect(surface, (60, 65, 80), (popup_x + 2, popup_y + 4 + i * item_h, popup_w - 4, item_h))
+                    pygame.draw.rect(surface, cp_hl, (popup_x + 4, popup_y + 4 + i * item_h, popup_w - 8, item_h - 2), border_radius=3)
                 txt = self.font.render(item, True, color)
                 surface.blit(txt, (popup_x + 8, popup_y + 4 + i * item_h))
 
-        #  vertical scrollbar
+        sb_bg = colors.get("scrollbar", (45, 48, 58))
+        sb_thumb = colors.get("scrollbar_thumb", (82, 90, 108))
         v_sb_bottom = rect.bottom - (sb if need_h_scroll else 0)
         if need_v_scroll:
-            thumb_h = max(20, int((v_sb_bottom - rect.y) * effective_visible / len(self.lines)))
+            thumb_h = max(24, int((v_sb_bottom - rect.y) * effective_visible / len(self.lines)))
             thumb_y = rect.y + int((v_sb_bottom - rect.y - thumb_h) * self.scroll_y / max(1, len(self.lines) - effective_visible))
             sb_x = rect.right - sb
-            pygame.draw.rect(surface, (50, 52, 58), (sb_x, rect.y, sb, v_sb_bottom - rect.y))
-            pygame.draw.rect(surface, (90, 95, 105), (sb_x, thumb_y, sb, thumb_h))
+            pygame.draw.rect(surface, sb_bg, (sb_x + 1, rect.y + 2, sb - 2, v_sb_bottom - rect.y - 4), border_radius=3)
+            pygame.draw.rect(surface, sb_thumb, (sb_x + 2, thumb_y + 2, sb - 4, thumb_h - 4), border_radius=3)
 
-        # horizontal scrollbar
         if need_h_scroll:
             h_sb_right = rect.right - (sb if need_v_scroll else 0)
-            thumb_w = max(40, int((h_sb_right - rect.x) * content_w / max(1, max_line_w)))
+            thumb_w = max(48, int((h_sb_right - rect.x) * content_w / max(1, max_line_w)))
             thumb_x = rect.x + int((h_sb_right - rect.x - thumb_w) * self.scroll_x / max(1, max_line_w - content_w))
             sb_y = rect.bottom - sb
-            pygame.draw.rect(surface, (50, 52, 58), (rect.x, sb_y, h_sb_right - rect.x, sb))
-            pygame.draw.rect(surface, (90, 95, 105), (thumb_x, sb_y, thumb_w, sb))
+            pygame.draw.rect(surface, sb_bg, (rect.x + 2, sb_y + 1, h_sb_right - rect.x - 4, sb - 2), border_radius=3)
+            pygame.draw.rect(surface, sb_thumb, (thumb_x + 2, sb_y + 2, thumb_w - 4, sb - 4), border_radius=3)
 
 
 class EditorPanel:
@@ -815,10 +822,11 @@ class EditorPanel:
     MINIMIZED_H = 36
 
     def __init__(self, screen_w: int, screen_h: int):
-        self.x = screen_w - 450
-        self.y = 10
-        self.w = 440
-        self.h = min(420, screen_h - 80)
+        # 默认布局与存档1一致：右侧堆叠
+        self.w = 641
+        self.x = min(829, screen_w - self.w - 20)
+        self.y = 15
+        self.h = min(427, screen_h - 80)
         self.minimized = False
         self._drag_mode = None
         self._drag_start = (0, 0)

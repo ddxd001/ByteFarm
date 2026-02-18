@@ -85,7 +85,8 @@ def list_saves() -> List[Dict[str, Any]]:
                 inv = (player.get("inventory", {}) if isinstance(player, dict) else {}) or {}
                 grass = inv.get("grass", 0)
                 stone = inv.get("stone", 0)
-                summary = f"草:{grass} 石头:{stone}"
+                wood = inv.get("wood", 0)
+                summary = f"草:{grass} 石:{stone} 木:{wood}"
                 saves.append({
                     "slot_id": i,
                     "name": name,

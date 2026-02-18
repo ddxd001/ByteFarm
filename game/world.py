@@ -4,7 +4,7 @@
 
 import random
 from typing import List, Tuple, Optional, Dict
-from .api import TileInfo, RESOURCE_GRASS, RESOURCE_STONE, Ground, Entities
+from .api import TileInfo, RESOURCE_GRASS, RESOURCE_STONE, RESOURCE_WOOD, Ground, Entities
 
 
 TILE_GRASS = "grass"
@@ -15,6 +15,9 @@ MAX_MAP_SIZE = 20
 
 # 实体从种植到成熟所需 ticks，期间机器人可离开
 ENTITY_MATURE_TICKS = 1000
+# Tree 在 Sandyland 上生长更慢（2 倍时间）
+TREE_MATURE_TICKS_GRASSLAND = 1000
+TREE_MATURE_TICKS_SANDYLAND = 2000
 
 
 def _random_tile(ground: str = None) -> Dict:
@@ -128,6 +131,20 @@ class World:
                 t.pop("entity_planted_at_tick", None)
                 t.pop("entity_amount", None)
             return {RESOURCE_STONE: 1}
+        if entity == Entities.Bush:
+            t["entity_amount"] = amt - 1
+            if t["entity_amount"] <= 0:
+                t["entity"] = None
+                t.pop("entity_planted_at_tick", None)
+                t.pop("entity_amount", None)
+            return {RESOURCE_WOOD: 1}
+        if entity == Entities.Tree:
+            t["entity_amount"] = amt - 1
+            if t["entity_amount"] <= 0:
+                t["entity"] = None
+                t.pop("entity_planted_at_tick", None)
+                t.pop("entity_amount", None)
+            return {RESOURCE_WOOD: 1}
         return {}
     
     def start_plant(self, x: int, y: int, entity_type: str, tick: int) -> bool:
@@ -140,7 +157,11 @@ class World:
             return False
         if entity_type == Entities.Stone and g != Ground.Sandyland:
             return False
-        if entity_type not in (Entities.Grass, Entities.Stone):
+        if entity_type == Entities.Bush and g != Ground.Grassland:
+            return False
+        if entity_type == Entities.Tree and g not in (Ground.Grassland, Ground.Sandyland):
+            return False
+        if entity_type not in (Entities.Grass, Entities.Stone, Entities.Bush, Entities.Tree):
             return False
         t["entity"] = entity_type
         t["entity_planted_at_tick"] = tick
@@ -156,6 +177,16 @@ class World:
             return 0
         return max(0, t.get("entity_amount", 1))  # 旧存档无 entity_amount 视为 1
     
+    def _get_entity_mature_ticks(self, t: Dict) -> int:
+        """获取实体成熟所需 ticks，Tree 在 Sandyland 上更慢"""
+        entity = t.get("entity")
+        ground = t.get("ground", Ground.Grassland)
+        if entity == Entities.Tree and ground == Ground.Sandyland:
+            return TREE_MATURE_TICKS_SANDYLAND
+        if entity == Entities.Tree:
+            return TREE_MATURE_TICKS_GRASSLAND
+        return ENTITY_MATURE_TICKS
+
     def is_entity_mature(self, x: int, y: int, current_tick: int) -> bool:
         """实体是否已成熟可采集"""
         t = self.get_tile(x, y)
@@ -164,7 +195,8 @@ class World:
         planted_at = t.get("entity_planted_at_tick")
         if planted_at is None or planted_at == 0:
             return True
-        return current_tick - planted_at >= ENTITY_MATURE_TICKS
+        ticks = self._get_entity_mature_ticks(t)
+        return current_tick - planted_at >= ticks
     
     def get_entity_growth_progress(self, x: int, y: int, current_tick: int) -> float:
         """实体生长进度 0~1，1 表示成熟"""
@@ -174,7 +206,8 @@ class World:
         planted_at = t.get("entity_planted_at_tick")
         if planted_at is None or planted_at == 0:
             return 1.0
-        return min(1.0, (current_tick - planted_at) / ENTITY_MATURE_TICKS)
+        ticks = self._get_entity_mature_ticks(t)
+        return min(1.0, (current_tick - planted_at) / ticks)
     
     def till(self, x: int, y: int) -> bool:
         """在指定格子耕地，Grassland <-> Sandyland 互相转化，并移除该格实体"""
